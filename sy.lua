@@ -153,49 +153,38 @@ function PercVoice:play(instrument)
   self.flash_level = 16
 end
 
-function PercVoice:run()
-  self.clock = clock.run(function()
-    while true do
-      clock.sync(0.25) -- 16th notes
-      local tick = self.tick
-      tick = tick + 1
-      local step_index = self.step_index
-      local step = self.pattern[step_index]
-      if tick > (step._l or step.l) then
-        tick = 1
-        step_index = step_index % #self.pattern + 1
-        step = self.pattern[step_index]
-        local shift = self.shift
-        local _l = step.l
-        if math.random() <= step.r then
-          _l = _l - shift
-          shift = 0
-        end
-        if math.random() <= step.s then
-          if math.random(0, 1) == 1 then
-            _l = _l + 1
-            shift = shift + 1
-          else
-            _l = _l - 1
-            shift = shift - 1
-          end
-        end
-        self.shift = shift
-        step._l = _l
-        if math.random() <= step.p then
-          self:play(step.i)
-        end
-        self.step_index = step_index
-      end
-      self.tick = tick
+function PercVoice:next_tick()
+  local tick = self.tick
+  tick = tick + 1
+  local step_index = self.step_index
+  local step = self.pattern[step_index]
+  if tick > (step._l or step.l) then
+    tick = 1
+    step_index = step_index % #self.pattern + 1
+    step = self.pattern[step_index]
+    local shift = self.shift
+    local _l = step.l
+    if math.random() <= step.r then
+      _l = _l - shift
+      shift = 0
     end
-  end)
-end
-
-function PercVoice:stop()
-  if self.clock ~= nil then
-    clock.cancel(self.clock)
+    if math.random() <= step.s then
+      if math.random(0, 1) == 1 then
+        _l = _l + 1
+        shift = shift + 1
+      else
+        _l = _l - 1
+        shift = shift - 1
+      end
+    end
+    self.shift = shift
+    step._l = _l
+    if math.random() <= step.p then
+      self:play(step.i)
+    end
+    self.step_index = step_index
   end
+  self.tick = tick
 end
 
 echo = EchoVoice.new()
@@ -283,9 +272,14 @@ function init()
   load_file('nc02-tonal.wav', 1, 10)
   params:set('clock_tempo', 120)
 
-  drums[1]:run()
-  drums[2]:run()
-  drums[3]:run()
+  clock.run(function()
+    while true do
+      clock.sync(0.25) -- 16th notes
+      for d = 1, 3 do
+        drums[d]:next_tick()
+      end
+    end
+  end)
 
   envelope_metro:start()
   redraw_metro:start()
