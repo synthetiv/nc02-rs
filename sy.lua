@@ -6,6 +6,8 @@ sc = softcut
 dirty = false
 next_head = 1
 
+regularity = 0
+
 echo_rates = { 1/24, 1/16, 1/12, 1/8, 1/6, 1/4 }
 
 --[[
@@ -143,7 +145,7 @@ function PercVoice:play(instrument)
   local start = instrument.o
   local length = instrument.l
   local send = 0
-  if math.random() <= instrument.e then
+  if math.random() <= math.min(1, instrument.e - regularity / 2) then
     send = 1
   end
 
@@ -172,11 +174,11 @@ function PercVoice:next_tick()
     step = self.pattern[step_index]
     local shift = self.shift
     local _l = step.l
-    if math.random() <= step.r then
+    if math.random() <= math.min(1, step.r + regularity) then
       _l = _l - shift
       shift = 0
     end
-    if math.random() <= step.s then
+    if math.random() <= math.min(1, step.s - regularity) then
       if math.random(0, 1) == 1 then
         _l = _l + 1
         shift = shift + 1
@@ -283,6 +285,16 @@ function init()
   params:set('compressor', 0)
   params:set('clock_tempo', 120)
 
+  params:add{
+    id = 'regularity',
+    name = 'regularity',
+    type = 'control',
+    controlspec = controlspec.new(-1, 1, 'lin', 0.05, 0),
+    action = function(value)
+      regularity = value
+    end
+  }
+
   clock.run(function()
     while true do
       clock.sync(0.25) -- 16th notes
@@ -296,7 +308,8 @@ function init()
     while true do
       clock.sync(2)
       if math.random() <= 0.3 then
-        echo.rate = echo_rates[math.random(1, 6)]
+        local rate = 3 + math.floor(math.random(-2, 3) * (1 - (regularity + 1) / 2))
+        echo.rate = echo_rates[rate]
       end
     end
   end)
@@ -311,6 +324,8 @@ function enc(n, d)
     params:delta('output_level', d)
   elseif n == 2 then
     params:delta('clock_tempo', d)
+  elseif n == 3 then
+    params:delta('regularity', d)
   end
 end
 
