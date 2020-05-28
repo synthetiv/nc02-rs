@@ -302,6 +302,9 @@ function init()
 end
 
 function enc(n, d)
+  if n == 1 then
+    params:delta('output_level', d)
+  end
 end
 
 function redraw()
