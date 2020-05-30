@@ -419,9 +419,9 @@ function redraw()
         y = y - _l * step_px
       end
       if step._p then
-        local level = 4
+        local level = math.ceil(y / 11)
         if s == 1 then
-          screen.level(math.max(4, drum.flash_level))
+          screen.level(math.min(16, level + drum.flash_level))
         end
         screen.level(level)
         screen.rect(x + get_sway(y, history_index, d), y, 3, 3)
