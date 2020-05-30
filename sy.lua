@@ -402,9 +402,9 @@ end
 function redraw()
   screen.clear()
   local beats = clock.get_beats()
-  sway_offset = ((beats * 2) % sway_length)
+  sway_offset = (beats * 2) % sway_length
   wind_direction_smooth = wind_direction_smooth + (wind_direction - wind_direction_smooth) * 0.03
-  local fractional_tick = (beats % 0.25) / 0.25
+  local fractional_tick = (beats * 4) % 1
   for d = 1, 3 do
     local drum = drums[d]
     local y = 64
