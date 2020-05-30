@@ -1,5 +1,9 @@
 -- ??? (nc02-rs)
 -- @synthetivv
+--
+-- we can bring to birth
+-- a new world from the
+-- ashes of the old
 
 sc = softcut
 
