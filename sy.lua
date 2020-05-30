@@ -8,7 +8,7 @@ next_head = 1
 
 regularity = 0
 
-echo_rates = { 1/24, 1/16, 1/12, 1/8, 1/6, 1/4 }
+echo_rates = { 1/48, 1/32, 1/24, 1/16, 1/12, 1/8, 1/6, 1/4, 1/3, 1/2 }
 
 step_px = 4
 history_length = math.ceil(64 / step_px)
@@ -62,16 +62,22 @@ function Voice.new(buffer)
 
   sc.enable(head, 1)
   sc.buffer(head, buffer)
+  sc.pan(head, 0)
   sc.level(head, 1.0)
   sc.loop(head, 0)
   sc.loop_start(head, 1)
   sc.loop_end(head, 2)
   sc.position(head, 0)
   sc.fade_time(head, 0.0025)
+  sc.pan_slew_time(head, 0.0001)
   sc.level_slew_time(head, 0.01)
   sc.rate(head, 0.5 / clock.get_beat_sec())
   sc.play(head, 1)
   sc.level_slew_time(head, 0.02)
+
+  for h = 1, 6 do
+    sc.level_cut_cut(head, h, 0)
+  end
 
   v.head = head
 
@@ -84,11 +90,13 @@ EchoVoice.__index = EchoVoice
 function EchoVoice.new()
   local v = setmetatable(Voice.new(2), EchoVoice)
   local head = v.head
-  local rate = 1/3
+  local pan = 0
+  local rate_setting = 5
+  local rate = echo_rates[rate_setting]
   local decay = 0.8
 
-  sc.loop_start(head, 1)
-  sc.loop_end(head, 1.0625)
+  sc.loop_start(head, head)
+  sc.loop_end(head, head + 0.0625)
   sc.loop(head, 1)
   sc.position(head, 1)
   sc.rate(head, rate / clock.get_beat_sec())
@@ -103,24 +111,33 @@ function EchoVoice.new()
   sc.pre_filter_rq(head, 1)
   sc.post_filter_dry(head, 0)
   sc.post_filter_hp(head, 1)
-  sc.post_filter_fc(head, 100)
+  sc.post_filter_fc(head, 200)
   sc.post_filter_rq(head, 1)
   sc.rate_slew_time(head, 0.3)
+  sc.pan_slew_time(head, 0.3)
 
+  v.pan = pan
+  v.rate_setting = rate_setting
   v.rate = rate
   v.decay = decay
 
   return v
 end
 
+function EchoVoice:move(d)
+  self.pan = math.max(-1, math.min(1, math.atan(self.pan + d)))
+  sc.pan(self.head, self.pan)
+end
+
 function EchoVoice:update_rate()
   local deviation = (math.random() - 0.5) * 0.05
-  sc.rate(echo.head, echo.rate * math.pow(2, deviation) / clock.get_beat_sec())
+  sc.rate(self.head, self.rate * math.pow(2, deviation) / clock.get_beat_sec())
+  self:move(wind_direction * 0.01 + math.random() * 0.25 - 0.125)
 end
 
 function EchoVoice:update_level()
   sc.pre_level(self.head, self.decay * sidechain_level)
-  sc.level(self.head, 1.3 * sidechain_level)
+  sc.level(self.head, 1 * sidechain_level)
 end
 
 PercVoice = {}
@@ -142,7 +159,7 @@ function PercVoice.new()
     history[h] = {
       _l = history_length + 1, -- make this fake "step" long enough that we'll never see it drawn
       _t = false,
-      _e = false,
+      _e = 0,
       i = bd
     }
   end
@@ -161,7 +178,9 @@ function PercVoice:update_level()
     level = level * sidechain_level
   end
   sc.level(self.head, level)
-  sc.level_cut_cut(self.head, echo.head, (self.step._e and level or 0))
+  for e = 1, 2 do
+    sc.level_cut_cut(self.head, echoes[e].head, (self.step._e == e and level or 0))
+  end
   sidechain_input = sidechain_input + level * instrument.cs
 end
 
@@ -184,9 +203,11 @@ function PercVoice:play()
   sc.loop_end(head, start + length)
   sc.position(head, start)
   sc.level(head, instrument.v)
-  sc.level_cut_cut(head, echo.head, (step._e and instrument.v or 0))
   sc.pan(head, instrument.p)
   sc.play(head, 1)
+  for e = 1, 2 do
+    sc.level_cut_cut(head, echoes[e].head, (step._e == e and instrument.v or 0))
+  end
 
   self.instrument = instrument
   self.send = send
@@ -220,7 +241,10 @@ function PercVoice:next_step()
   local _t = math.random() < step.t
 
   -- calculate echo send probability
-  local _e = math.random() < math.min(1, step.i.e - regularity / 2)
+  local _e = 0
+  if math.random() < math.min(1, step.i.e - regularity / 2) then
+    _e = math.random(1, 2)
+  end
 
   self.shift = shift
   step._l = _l
@@ -264,7 +288,10 @@ function PercVoice:set_pattern(pattern)
   self.step_index = step_index
 end
 
-echo = EchoVoice.new()
+echoes = {}
+for e = 1, 2 do
+  echoes[e] = EchoVoice.new()
+end
 
 drums = {}
 for d = 1, 3 do
@@ -319,7 +346,9 @@ envelope_metro.event = function()
   for d = 1, 3 do
     drums[d]:update_level()
   end
-  echo:update_level()
+  for e = 1, 2 do
+    echoes[e]:update_level()
+  end
   if sidechain_input > sidechain_input_smooth then
     sidechain_input_smooth = sidechain_input
   else
@@ -343,7 +372,9 @@ end
 flutter_metro = metro.init()
 flutter_metro.time = 0.3
 flutter_metro.event = function()
-  echo:update_rate()
+  for e = 1, 2 do
+    echoes[e]:update_rate()
+  end
 end
 
 function load_file(filename, buffer, buffer_start)
@@ -382,9 +413,17 @@ function init()
     while true do
       clock.sync(2)
       if math.random() < 0.3 then
-        local rate = 3 + math.floor(math.random(-2, 3) * (1 - (regularity + 1) / 2))
-        echo.rate = echo_rates[rate]
+        for e = 1, 2 do
+          local echo = echoes[e]
+          local jump = (math.random() - 0.5) * 2 * (2 - regularity)
+          echo.rate_setting = math.max(1, math.min(#echo_rates, math.floor(echo.rate_setting + jump + 0.5)))
+          echo.rate = echo_rates[echo.rate_setting]
+          echo:move(math.random() - 0.5)
+        end
         wind_direction = math.random() * 2 - 1
+        local stillness = math.atan(2 - math.abs(wind_direction * 2)) * 0.37
+        sc.level_cut_cut(echoes[1].head, echoes[2].head, stillness)
+        sc.level_cut_cut(echoes[2].head, echoes[1].head, stillness)
       end
     end
   end)
@@ -438,7 +477,7 @@ function redraw()
         screen.level(level)
         screen.rect(x + get_sway(y, history_index, d), y, 3, 3)
         screen.fill()
-        if step._e then
+        if step._e > 0 then
           local echo_y = y + step_px + 1
           while level > 1 do
             level = level - 1
