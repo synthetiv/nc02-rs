@@ -357,14 +357,18 @@ function PercVoice:jump_to_next_step()
 end
 
 function PercVoice:next_tick()
-  self.tick = self.tick % self.pattern.length + 1
 
   local i = 0
   local did_trig = false
   local did_step = false
 
   if shuffle then
-    self:jump_to_next_step()
+    self.tick = self.tick % self.pattern.length + 0.5
+    if self.tick % 1 == 0 then
+      self:jump_to_next_step()
+    end
+  else
+    self.tick = math.floor(self.tick % self.pattern.length + 1)
   end
 
   -- maybe play step
@@ -380,7 +384,7 @@ function PercVoice:next_tick()
 
       -- calculate echo send probability
       local echo = 0
-      if math.random() < math.min(1, step.echo - regularity / 2) then
+      if math.random() / regularity < step.echo - regularity then
         echo = math.random(1, 2)
       end
 
@@ -409,10 +413,10 @@ function PercVoice:next_tick()
 
     if not shuffle then
       -- maybe reset/shift for next step
-      if math.random() < math.min(1, self.next_step.p_reset + regularity) then
+      if math.random() / regularity < self.next_step.p_reset then
         self.shift = 0
       end
-      if math.random() < math.min(1, self.next_step.p_shift - regularity) then
+      if math.random() / regularity < self.next_step.p_shift then
         if math.random(0, 1) == 1 then
           self.shift = self.shift + 1
         else
@@ -463,6 +467,19 @@ function PercVoice:play()
   self.decay_level = 1
 end
 
+function PercVoice:run()
+  self.clock = clock.run(function()
+    while true do
+      clock.sync(self.pattern.rate / (shuffle and 2 or 1))
+      self:next_tick()
+    end
+  end)
+end
+
+function PercVoice:stop()
+  clock.stop(self.clock)
+end
+
 function PercVoice:set_pattern(pattern)
   self.pattern = pattern
   self.step_index = #pattern
@@ -487,6 +504,7 @@ end
 
 drums[1]:set_pattern{
   length = 16,
+  rate = 0.25,
   bd{ t = 1,    p_trig = 1,     p_shift = 0.25,  p_reset = 0.9, p_repeat = 0.1 },
   hd{ t = 5,    p_trig = 0.33,  p_shift = 0.25,  p_reset = 0.5  },
   hc{ t = 7,    p_trig = 0.05,  p_shift = 0.25,  p_reset = 0.5  },
@@ -496,6 +514,7 @@ drums[1]:set_pattern{
 
 drums[2]:set_pattern{
   length = 8,
+  rate = 0.25,
   ch{ t = 1,    p_trig = 0.2,   p_shift = 0,     p_reset = 1,   p_repeat = 0.4 },
   ch{ t = 3,    p_trig = 0.8,   p_shift = 0,     p_reset = 1    },
   oh{ t = 5,    p_trig = 0.2,   p_shift = 0.25,  p_reset = 1    },
@@ -542,6 +561,7 @@ drums[3]:set_pattern{
 --]]
 drums[3]:set_pattern{
   length = 77,
+  rate = 0.25,
   z1{ t = 1,    p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
   n2{ t = 5,    p_trig = 0.3,   p_shift = 0,     p_reset = 1    },
   za{ t = 9,    p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
@@ -614,14 +634,9 @@ function init()
     end
   }
 
-  clock.run(function()
-    while true do
-      clock.sync(0.25) -- 16th notes
-      for d = 1, 3 do
-        drums[d]:next_tick()
-      end
-    end
-  end)
+  for d = 1, 3 do
+    drums[d]:run()
+  end
 
   clock.run(function()
     while true do
@@ -660,7 +675,11 @@ end
 function key(n, z)
   if n == 2 then
     shuffle = z == 1
-    if not shuffle then
+    if shuffle then
+      for d = 1, 3 do
+        drums[d].tick = drums[d].tick + 0.5
+      end
+    else
       for d = 1, 3 do
         drums[d].shift = 0
       end
@@ -756,4 +775,7 @@ function cleanup()
   redraw_metro:stop()
   envelope_metro:stop()
   flutter_metro:stop()
+  for d = 1, 3 do
+    drums[d]:stop()
+  end
 end
