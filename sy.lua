@@ -625,27 +625,29 @@ function redraw()
       local history_index = (drum.history_index - s) % history_length + 1
       local step = drum.history[history_index]
       local y = math.floor(64 - (time - step.time) * 40 + 0.5)
-      local x = step.x
-      if step.trig then
-        local level = math.ceil(y / 11)
-        screen.level(level)
-        screen.rect(x + get_sway(y, history_index, d), y, 3, 3)
-        screen.fill()
-        if step.echo > 0 then
-          local echo_y = y + step_px + 1
-          while level > 1 do
-            level = level - 1
-            screen.level(level)
-            screen.move(x + get_sway(echo_y - step_px + 1, history_index, d), echo_y)
-            screen.line_rel(3, 0)
-            screen.stroke()
-            echo_y = echo_y + 2
+      if y > -3 then
+        local x = step.x
+        if step.trig then
+          local level = math.max(1, math.floor(15 * math.max(0, y / 64) ^ 2 + 0.5))
+          screen.level(level)
+          screen.rect(x + get_sway(y, history_index, d), y, 3, 3)
+          screen.fill()
+          if step.echo > 0 then
+            local echo_y = y + step_px + 1
+            while level > 1 do
+              level = level - 1
+              screen.level(level)
+              screen.move(x + get_sway(echo_y - step_px + 1, history_index, d), echo_y)
+              screen.line_rel(3, 0)
+              screen.stroke()
+              echo_y = echo_y + 2
+            end
           end
+        else
+          screen.level(1)
+          screen.rect(x + 1 + get_sway(y, history_index, d), y + 1, 1, 1)
+          screen.fill()
         end
-      else
-        screen.level(1)
-        screen.rect(x + 1 + get_sway(y, history_index, d), y + 1, 1, 1)
-        screen.fill()
       end
     end
   end
