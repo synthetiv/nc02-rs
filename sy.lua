@@ -51,7 +51,6 @@ inst_base = {
   comp_send = 0.7,
   comp = false,
   x = 64,
-  n_len = 1,
   p_trig = 1,
   p_shift = 0,
   p_reset = 1
@@ -290,7 +289,7 @@ PercVoice.__index = PercVoice
 
 function PercVoice.new()
   local v = setmetatable(Voice.new(1), PercVoice)
-  v.ticks_to_next_step = 0
+  v.tick = 0
   v.step_index = 1
   v.shift = 0
   v.send = 0
@@ -329,6 +328,70 @@ function PercVoice:update_level()
   sidechain_input = sidechain_input + level * step.comp_send
 end
 
+function PercVoice:next_tick()
+  self.tick = self.tick % self.pattern.length + 1
+
+  local i = 0
+  local did_trig = false
+  -- maybe play step
+  -- TODO: is >= needed? under what circumstances might we have jumped PAST a step?
+  while (self.tick + self.shift - 1) % self.pattern.length + 1 == self.next_step.t do
+
+    local step_index = self.next_step_index
+    local step = self.next_step
+    
+    if not did_trig then
+
+      -- calculate trigger probability
+      local trig = math.random() < step.p_trig
+
+      -- calculate echo send probability
+      local echo = 0
+      if math.random() < math.min(1, step.echo - regularity / 2) then
+        echo = math.random(1, 2)
+      end
+
+      self.echo = echo
+      self.step = step
+      self.step_index = step_index
+
+      -- save history step
+      local history_index = self.history_index % history_length + 1
+      local history_step = self.history[history_index]
+      history_step.time = util.time()
+      history_step.x = step.x
+      history_step.trig = trig
+      history_step.echo = echo
+      self.history_index = history_index
+
+      -- play?
+      if trig then
+        self:play()
+        did_trig = true
+      end
+    end
+
+    self.next_step_index = self.next_step_index % #self.pattern + 1
+    self.next_step = self.pattern[self.next_step_index]
+    i = i + 1
+    if i >= 10 then
+      error('loooop')
+    end
+
+    -- maybe reset/shift for next step
+    if math.random() < math.min(1, self.next_step.p_reset + regularity) then
+      self.shift = 0
+    end
+    if math.random() < math.min(1, self.next_step.p_shift - regularity) then
+      if math.random(0, 1) == 1 then
+        self.shift = self.shift + 1
+      else
+        self.shift = self.shift - 1
+      end
+    end
+  end
+end
+
 function PercVoice:play()
   local step = self.step
   local head = self.head
@@ -346,75 +409,17 @@ function PercVoice:play()
     sc.level_cut_cut(head, echoes[e].head, (self.echo == e and step.level or 0))
   end
 
-  self.send = send
   self.decay_level = 1
-end
-
-function PercVoice:next_step()
-  local shift = self.shift
-  local step_index = self.step_index % #self.pattern + 1
-  local step = self.pattern[step_index]
-
-  -- calculate step length
-  local length = step.n_len
-  if math.random() < math.min(1, step.p_reset + regularity) then
-    local reset_shift = math.min(length - 1, shift)
-    length = length - reset_shift
-    shift = shift - reset_shift
-  end
-  if math.random() < math.min(1, step.p_shift - regularity) then
-    if math.random(0, 1) == 1 then
-      length = length + 1
-      shift = shift + 1
-    elseif length > 1 then
-      length = length - 1
-      shift = shift - 1
-    end
-  end
-
-  -- calculate trigger probability
-  local rand = math.random()
-  local trig = rand < step.p_trig
-
-  -- calculate echo send probability
-  local echo = 0
-  if math.random() < math.min(1, step.echo - regularity / 2) then
-    echo = math.random(1, 2)
-  end
-
-  self.shift = shift
-  self.ticks_to_next_step = length
-  self.echo = echo
-  self.step = step
-  self.step_index = step_index
-
-  local history_index = self.history_index % history_length + 1
-  local memory = self.history[history_index]
-  memory.time = util.time()
-  memory.x = step.x
-  memory.trig = trig
-  memory.echo = echo
-  self.history_index = history_index
-
-  if trig then
-    self:play()
-  end
-end
-
-function PercVoice:next_tick()
-  self.ticks_to_next_step = self.ticks_to_next_step - 1
-  if self.ticks_to_next_step < 1 then
-    self:next_step()
-  end
 end
 
 function PercVoice:set_pattern(pattern)
   self.pattern = pattern
-  local step_index = #pattern
-  local step = pattern[step_index]
-  self.ticks_to_next_step = 0
-  self.step = step
-  self.step_index = step_index
+  self.step_index = #pattern
+  self.step = pattern[self.step_index]
+  self.next_step_index = 1
+  self.next_step = pattern[self.next_step_index]
+  self.tick = 0
+  self.shift = 0
 end
 
 echoes = {}
@@ -430,69 +435,76 @@ end
 -- TODO: negative p_trig is less likely to trigger when regularity is high
 
 drums[1]:set_pattern{
-  bd{ n_len = 4,  p_trig = 1,     p_shift = 0.25,  p_reset = 0.7 },
-  hd{ n_len = 2,  p_trig = 0.33,  p_shift = 0.25,  p_reset = 0.5 },
-  hc{ n_len = 2,  p_trig = 0.05,  p_shift = 0.25,  p_reset = 0.5 },
-  bd{ n_len = 4,  p_trig = 1,     p_shift = 0.25,  p_reset = 0.7 },
-  hc{ n_len = 4,  p_trig = 0.1,   p_shift = 0.25,  p_reset = 0.5 }
+  length = 16,
+  bd{ t = 1,    p_trig = 1,     p_shift = 0.25,  p_reset = 0.7  },
+  hd{ t = 5,    p_trig = 0.33,  p_shift = 0.25,  p_reset = 0.5  },
+  hc{ t = 7,    p_trig = 0.05,  p_shift = 0.25,  p_reset = 0.5  },
+  bd{ t = 9,    p_trig = 1,     p_shift = 0.25,  p_reset = 0.7  },
+  hc{ t = 13,   p_trig = 0.1,   p_shift = 0.25,  p_reset = 0.5  }
 }
 
 drums[2]:set_pattern{
-  ch{ n_len = 2,  p_trig = 0.2,  p_shift = 0,  p_reset = 1 },
-  ch{ n_len = 2,  p_trig = 0.8,  p_shift = 0,  p_reset = 1 },
-  oh{ n_len = 2,  p_trig = 0.2,  p_shift = 0,  p_reset = 1 },
-  ch{ n_len = 2,  p_trig = 0.8,  p_shift = 0,  p_reset = 1 }
+  length = 8,
+  ch{ t = 1,    p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
+  ch{ t = 3,    p_trig = 0.8,   p_shift = 0,     p_reset = 1    },
+  oh{ t = 5,    p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
+  ch{ t = 7,    p_trig = 0.8,   p_shift = 0,     p_reset = 1    }
 }
 
 --[[
 drums[3]:set_pattern{
-  n2{ n_len = 16,  p_trig = 1,    p_shift = 0,    p_reset = 0.25 },
-  n1{ n_len = 8,   p_trig = 0.2,  p_shift = 0.1,  p_reset = 0.25 },
-  n2{ n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 0.25 },
-  n2{ n_len = 16,  p_trig = 0.7,  p_shift = 0,    p_reset = 0.25 },
-  n2{ n_len = 8,   p_trig = 1,    p_shift = 0,    p_reset = 0.25 },
-  n1{ n_len = 8,   p_trig = 0.2,  p_shift = 0.1,  p_reset = 0.25 },
-  n1{ n_len = 8,   p_trig = 0.2,  p_shift = 0.1,  p_reset = 0.25 }
+  length = 72,
+  n2{ t = 1,    n_len = 16,  p_trig = 1,    p_shift = 0,    p_reset = 0.25 },
+  n1{ t = 17,   n_len = 8,   p_trig = 0.2,  p_shift = 0.1,  p_reset = 0.25 },
+  n2{ t = 25,   n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 0.25 },
+  n2{ t = 33,   n_len = 16,  p_trig = 0.7,  p_shift = 0,    p_reset = 0.25 },
+  n2{ t = 49,   n_len = 8,   p_trig = 1,    p_shift = 0,    p_reset = 0.25 },
+  n1{ t = 57,   n_len = 8,   p_trig = 0.2,  p_shift = 0.1,  p_reset = 0.25 },
+  n1{ t = 65,   n_len = 8,   p_trig = 0.2,  p_shift = 0.1,  p_reset = 0.25 }
 }
 drums[3]:set_pattern{
-  n2{ n_len = 1,    p_trig = 0.7,  p_shift = 0,    p_reset = 0.25 },
-  sd{ n_len = 0.5,  p_trig = 0.1,  p_shift = 0,    p_reset = 1 },
-  n1{ n_len = 0.5,  p_trig = 0.5,  p_shift = 0,    p_reset = 0.25 }
+  length = 2
+  n2{ t = 1,    n_len = 1,    p_trig = 0.7,  p_shift = 0,    p_reset = 0.25 },
+  sd{ t = 2,    n_len = 0.5,  p_trig = 0.1,  p_shift = 0,    p_reset = 1 },
+  n1{ t = 2.5,  n_len = 0.5,  p_trig = 0.5,  p_shift = 0,    p_reset = 0.25 }
 }
 drums[3]:set_pattern{
-  n2{ n_len = 4,   p_trig = 0.3,  p_shift = 0,    p_reset = 0.25 },
-  sd{ n_len = 2,   p_trig = 0.1,  p_shift = 0,    p_reset = 1 },
-  n1{ n_len = 6,   p_trig = 0.3,  p_shift = 0,    p_reset = 0.25 },
-  sd{ n_len = 2,   p_trig = 0.1,  p_shift = 0,    p_reset = 1 },
-  n1{ n_len = 6,   p_trig = 0.3,  p_shift = 0,    p_reset = 0.25 }
+  length = 20,
+  n2{ t = 1,    n_len = 4,   p_trig = 0.3,  p_shift = 0,    p_reset = 0.25 },
+  sd{ t = 5,    n_len = 2,   p_trig = 0.1,  p_shift = 0,    p_reset = 1 },
+  n1{ t = 7,    n_len = 6,   p_trig = 0.3,  p_shift = 0,    p_reset = 0.25 },
+  sd{ t = 13,   n_len = 2,   p_trig = 0.1,  p_shift = 0,    p_reset = 1 },
+  n1{ t = 15,   n_len = 6,   p_trig = 0.3,  p_shift = 0,    p_reset = 0.25 }
 }
 drums[3]:set_pattern{
-  z1{ n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
-  za{ n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
-  z2{ n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
-  zb{ n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
-  z3{ n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
-  zc{ n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
-  z4{ n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
-  zd{ n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
-  z5{ n_len = 16,  p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
+  length = 80,
+  z1{ t = 1,    n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
+  za{ t = 9,    n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
+  z2{ t = 17,   n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
+  zb{ t = 25,   n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
+  z3{ t = 33,   n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
+  zc{ t = 41,   n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
+  z4{ t = 49,   n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
+  zd{ t = 57,   n_len = 8,   p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
+  z5{ t = 65,   n_len = 16,  p_trig = 0.2,  p_shift = 0,    p_reset = 1 },
 }
 --]]
 drums[3]:set_pattern{
-  z1{ n_len = 4,  p_trig = 0.2,  p_shift = 0,  p_reset = 1    },
-  n2{ n_len = 4,  p_trig = 0.3,  p_shift = 0,  p_reset = 1    },
-  za{ n_len = 8,  p_trig = 0.2,  p_shift = 0,  p_reset = 1    },
-  z2{ n_len = 8,  p_trig = 0.2,  p_shift = 0,  p_reset = 1    },
-  zb{ n_len = 4,  p_trig = 0.2,  p_shift = 0,  p_reset = 1    },
-  n1{ n_len = 4,  p_trig = 0.3,  p_shift = 0,  p_reset = 1    },
-  z3{ n_len = 8,  p_trig = 0.2,  p_shift = 0,  p_reset = 1    },
-  zc{ n_len = 8,  p_trig = 0.2,  p_shift = 0,  p_reset = 1    },
-  z4{ n_len = 8,  p_trig = 0.2,  p_shift = 0,  p_reset = 1    },
-  zd{ n_len = 8,  p_trig = 0.2,  p_shift = 0,  p_reset = 1    },
-  z5{ n_len = 4,  p_trig = 0.2,  p_shift = 0,  p_reset = 1    },
-  n1{ n_len = 4,  p_trig = 0.3,  p_shift = 0,  p_reset = 0.25 },
-  n2{ n_len = 3,  p_trig = 0.3,  p_shift = 0,  p_reset = 0.25 },
-  sd{ n_len = 2,  p_trig = 0.1,  p_shift = 0,  p_reset = 1    }
+  length = 77,
+  z1{ t = 1,    p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
+  n2{ t = 5,    p_trig = 0.3,   p_shift = 0,     p_reset = 1    },
+  za{ t = 9,    p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
+  z2{ t = 17,   p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
+  zb{ t = 25,   p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
+  n1{ t = 29,   p_trig = 0.3,   p_shift = 0,     p_reset = 1    },
+  z3{ t = 33,   p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
+  zc{ t = 41,   p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
+  z4{ t = 49,   p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
+  zd{ t = 57,   p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
+  z5{ t = 65,   p_trig = 0.2,   p_shift = 0,     p_reset = 1    },
+  n1{ t = 69,   p_trig = 0.3,   p_shift = 0,     p_reset = 1    },
+  n2{ t = 73,   p_trig = 0.3,   p_shift = 0,     p_reset = 1    },
+  sd{ t = 76,   p_trig = 0.1,   p_shift = 0,     p_reset = 1    }
 }
 
 envelope_metro = metro.init()
